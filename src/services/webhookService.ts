@@ -1,6 +1,12 @@
 import { prisma } from "../lib/prisma";
 import { webhookBodySchema } from "../schemas/webhook";
-import { ALLOWED_TRANSITIONS, INGRESSO_STATUS, PEDIDO_STATUS, type PedidoStatus, type WebhookStatus } from "../types/status";
+import {
+  ALLOWED_TRANSITIONS,
+  INGRESSO_STATUS,
+  PEDIDO_STATUS,
+  type PedidoStatus,
+  type WebhookStatus,
+} from "../types/status";
 
 type Logger = Pick<Console, "warn" | "info">;
 
@@ -12,13 +18,10 @@ function extrairCampoBruto(body: unknown, campo: string): string {
   return "";
 }
 
-/**
- * Processa um webhook de pagamento. Sempre:
- * 1) persiste o body bruto recebido em WebhookEvent (mesmo que inválido/pedido inexistente),
- * 2) tenta aplicar o efeito de negócio correspondente,
- * 3) nunca lança erro para o caller — o handler HTTP sempre responde 200 ao provedor.
- */
-export async function processarWebhook(rawBody: unknown, logger: Logger = console): Promise<void> {
+export async function processarWebhook(
+  rawBody: unknown,
+  logger: Logger = console,
+): Promise<void> {
   const eventoId = extrairCampoBruto(rawBody, "eventoId");
   const pedidoId = extrairCampoBruto(rawBody, "pedidoId");
   const statusBruto = extrairCampoBruto(rawBody, "status");
@@ -35,7 +38,9 @@ export async function processarWebhook(rawBody: unknown, logger: Logger = consol
 
   const parsed = webhookBodySchema.safeParse(rawBody);
   if (!parsed.success) {
-    logger.warn(`[webhook] payload inválido, ignorado: ${JSON.stringify(parsed.error.flatten())}`);
+    logger.warn(
+      `[webhook] payload inválido, ignorado: ${JSON.stringify(parsed.error.flatten())}`,
+    );
     return;
   }
 
@@ -48,7 +53,9 @@ export async function processarWebhook(rawBody: unknown, logger: Logger = consol
     });
 
     if (!pedido) {
-      logger.warn(`[webhook] pedido ${parsed.data.pedidoId} não encontrado, evento ${eventoId} ignorado`);
+      logger.warn(
+        `[webhook] pedido ${parsed.data.pedidoId} não encontrado, evento ${eventoId} ignorado`,
+      );
       return;
     }
 
@@ -61,13 +68,18 @@ export async function processarWebhook(rawBody: unknown, logger: Logger = consol
     });
 
     if (jaProcessado) {
-      logger.info(`[webhook] eventoId ${eventoId} já processado anteriormente, ignorando reenvio`);
+      logger.info(
+        `[webhook] eventoId ${eventoId} já processado anteriormente, ignorando reenvio`,
+      );
       return;
     }
 
-    const transicoesPermitidas = ALLOWED_TRANSITIONS[pedido.status as PedidoStatus] ?? [];
+    const transicoesPermitidas =
+      ALLOWED_TRANSITIONS[pedido.status as PedidoStatus] ?? [];
     if (!transicoesPermitidas.includes(status as WebhookStatus)) {
-      logger.warn(`[webhook] transição ${pedido.status} -> ${status} não permitida para pedido ${pedido.id}, ignorada`);
+      logger.warn(
+        `[webhook] transição ${pedido.status} -> ${status} não permitida para pedido ${pedido.id}, ignorada`,
+      );
       return;
     }
 
