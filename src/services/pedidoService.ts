@@ -26,6 +26,6 @@ export async function listarPedidos() {
       itens: true,
       ingressos: true,
     },
-    orderBy: { createdAt: "asc" },
+    orderBy: { createdAt: "desc" },
   });
 }
