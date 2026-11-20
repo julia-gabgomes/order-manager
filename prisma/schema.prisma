@@ -1,0 +1,62 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// status: aguardando_pagamento | pago | recusado | estornado
+// SQLite não suporta enum nativo no Prisma — validação de valores é feita na camada de aplicação (Zod).
+model Pedido {
+  id        String   @id @default(cuid())
+  status    String   @default("aguardando_pagamento")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  itens     ItemPedido[]
+  ingressos Ingresso[]
+}
+
+model ItemPedido {
+  id         String @id @default(cuid())
+  pedidoId   String
+  evento     String
+  quantidade Int
+
+  pedido    Pedido     @relation(fields: [pedidoId], references: [id])
+  ingressos Ingresso[]
+
+  @@index([pedidoId])
+}
+
+// status: ativo | cancelado
+model Ingresso {
+  id           String @id @default(cuid())
+  pedidoId     String
+  itemPedidoId String
+  status       String @default("ativo")
+
+  pedido     Pedido     @relation(fields: [pedidoId], references: [id])
+  itemPedido ItemPedido @relation(fields: [itemPedidoId], references: [id])
+
+  @@index([pedidoId])
+  @@index([itemPedidoId])
+}
+
+// Log de toda chamada recebida em POST /webhooks/pagamento.
+// Sem @unique em eventoId: a tabela não deduplica via constraint de banco,
+// a idempotência é verificada em app-level consultando `processed`.
+model WebhookEvent {
+  id        String   @id @default(cuid())
+  eventoId  String
+  pedidoId  String
+  status    String
+  payload   String
+  processed Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([eventoId])
+  @@index([pedidoId])
+}
