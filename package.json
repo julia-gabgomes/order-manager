@@ -4,6 +4,9 @@
   "description": "API de pedidos de ingressos com webhook de pagamento",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": "24.x"
+  },
   "scripts": {
     "dev": "node --env-file=.env --import tsx/esm --watch src/server.ts",
     "start": "node --env-file=.env --import tsx/esm src/server.ts",
