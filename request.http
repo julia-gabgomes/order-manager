@@ -1,0 +1,156 @@
+@baseUrl = http://localhost:3000
+
+### Healthcheck
+GET {{baseUrl}}/
+
+### ==========================================================
+### PEDIDOS
+### ==========================================================
+
+### Criar pedido (usar para gerar o id usado nos webhooks abaixo)
+POST {{baseUrl}}/pedidos
+Content-Type: application/json
+
+{
+  "itens": [
+    { "evento": "Show Banda X", "quantidade": 2 },
+    { "evento": "Show Banda Y", "quantidade": 1 }
+  ]
+}
+
+### Criar pedido inválido (sem itens) -> 400
+POST {{baseUrl}}/pedidos
+Content-Type: application/json
+
+{
+  "itens": []
+}
+
+### Criar pedido inválido (quantidade <= 0) -> 400
+POST {{baseUrl}}/pedidos
+Content-Type: application/json
+
+{
+  "itens": [
+    { "evento": "Show Banda X", "quantidade": 0 }
+  ]
+}
+
+### Listar pedidos
+GET {{baseUrl}}/pedidos
+
+### ==========================================================
+### WEBHOOKS DE PAGAMENTO
+### Substitua "PEDIDO_ID_AQUI" pelo id retornado ao criar o pedido.
+### Pedido novo nasce com status "aguardando_pagamento".
+### ==========================================================
+
+### Cenário 1 — Pedido PAGO
+### aguardando_pagamento -> pago (gera ingressos ATIVO para cada item)
+POST {{baseUrl}}/webhooks/pagamento
+Content-Type: application/json
+
+{
+  "eventoId": "evt-pago-001",
+  "pedidoId": "PEDIDO_ID_AQUI",
+  "status": "pago"
+}
+
+### Reenvio do mesmo evento (idempotência) -> ignorado, não duplica ingressos
+POST {{baseUrl}}/webhooks/pagamento
+Content-Type: application/json
+
+{
+  "eventoId": "evt-pago-001",
+  "pedidoId": "PEDIDO_ID_AQUI",
+  "status": "pago"
+}
+
+### Cenário 2 — Pedido RECUSADO
+### aguardando_pagamento -> recusado (não gera ingressos)
+POST {{baseUrl}}/webhooks/pagamento
+Content-Type: application/json
+
+{
+  "eventoId": "evt-recusado-001",
+  "pedidoId": "PEDIDO_ID_AQUI",
+  "status": "recusado"
+}
+
+### Cenário 3 — Pedido ESTORNADO
+### Só é permitido a partir de um pedido já PAGO: pago -> estornado
+### (cancela todos os ingressos do pedido)
+POST {{baseUrl}}/webhooks/pagamento
+Content-Type: application/json
+
+{
+  "eventoId": "evt-estornado-001",
+  "pedidoId": "PEDIDO_ID_AQUI",
+  "status": "estornado"
+}
+
+### ==========================================================
+### CENÁRIOS DE ERRO / BORDA
+### ==========================================================
+
+### Transição inválida: pedido recusado não pode virar pago
+### (recusado -> pago não está em ALLOWED_TRANSITIONS; evento é ignorado)
+POST {{baseUrl}}/webhooks/pagamento
+Content-Type: application/json
+
+{
+  "eventoId": "evt-transicao-invalida-001",
+  "pedidoId": "PEDIDO_ID_AQUI",
+  "status": "pago"
+}
+
+### Transição inválida: estornar pedido que ainda está aguardando pagamento
+### (aguardando_pagamento -> estornado não é permitido)
+POST {{baseUrl}}/webhooks/pagamento
+Content-Type: application/json
+
+{
+  "eventoId": "evt-transicao-invalida-002",
+  "pedidoId": "PEDIDO_ID_AQUI",
+  "status": "estornado"
+}
+
+### Pedido inexistente -> evento é registrado mas ignorado (pedido não encontrado)
+POST {{baseUrl}}/webhooks/pagamento
+Content-Type: application/json
+
+{
+  "eventoId": "evt-pedido-inexistente-001",
+  "pedidoId": "00000000-0000-0000-0000-000000000000",
+  "status": "pago"
+}
+
+### Payload inválido: status não reconhecido -> evento registrado, não processado
+POST {{baseUrl}}/webhooks/pagamento
+Content-Type: application/json
+
+{
+  "eventoId": "evt-status-invalido-001",
+  "pedidoId": "PEDIDO_ID_AQUI",
+  "status": "cancelado"
+}
+
+### Payload inválido: campos obrigatórios ausentes -> evento registrado, não processado
+POST {{baseUrl}}/webhooks/pagamento
+Content-Type: application/json
+
+{
+  "eventoId": "",
+  "pedidoId": "",
+  "status": ""
+}
+
+### Status com caixa alta/espaços é normalizado (toLowerCase + trim) -> processado como "pago"
+POST {{baseUrl}}/webhooks/pagamento
+Content-Type: application/json
+
+{
+  "eventoId": "evt-status-normalizado-001",
+  "pedidoId": "PEDIDO_ID_AQUI",
+  "status": "  PAGO  "
+}
