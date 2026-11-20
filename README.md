@@ -51,11 +51,11 @@ npm run typecheck
 
 ## Rotas
 
-| Método | Rota                      | Descrição                                   |
-| ------ | ------------------------- | -------------------------------------------- |
-| POST   | `/pedidos`                | Cria um pedido com um ou mais itens          |
-| GET    | `/pedidos`                | Lista todos os pedidos com status e ingressos |
-| POST   | `/webhooks/pagamento`     | Recebe o aviso de pagamento do provedor      |
+| Método | Rota                  | Descrição                                     |
+| ------ | --------------------- | --------------------------------------------- |
+| POST   | `/pedidos`            | Cria um pedido com um ou mais itens           |
+| GET    | `/pedidos`            | Lista todos os pedidos com status e ingressos |
+| POST   | `/webhooks/pagamento` | Recebe o aviso de pagamento do provedor       |
 
 ### `POST /pedidos`
 
@@ -86,13 +86,26 @@ Responde `200` com a lista de pedidos, cada um com `id`, `status` e `ingressos: 
 
 `status` aceita `pago`, `recusado` ou `estornado` (maiúsculas/minúsculas, ver decisões abaixo). Sempre responde `200` ao provedor (ver "Decisões e ambiguidades").
 
-## Decisões e ambiguidades
+## Testando as rotas manualmente
 
-O enunciado permitia Next.js ou Node puro, e deixava algumas regras implícitas. Decisões tomadas e motivos:
+O arquivo [`request.http`](./request.http) na raiz do projeto tem requisições prontas para todas as rotas, incluindo os três cenários de webhook (pago, recusado, estornado) e casos de erro/borda (transição inválida, pedido inexistente, payload inválido, reenvio idempotente).
 
-- **Fastify em vez de Next.js**: o problema é uma API pura, sem necessidade de páginas/app router. Next.js adicionaria build/tooling sem benefício aqui, e o enunciado permitia Node puro. Fastify foi escolhido entre as opções de Node por ter validação de schema e testes HTTP (`app.inject()`) nativos, sem subir um servidor real para testar.
+Para usar:
 
-- **Webhook sempre responde 200 ao provedor e sempre persiste o body recebido**: a tabela `WebhookEvent` guarda **todo** webhook recebido (válido ou não, pedido existente ou não), com o body bruto em `payload`. O fluxo é: (1) salva o evento recebido, (2) tenta processá-lo, (3) sempre responde `200`. Isso evita que o provedor fique reenviando o webhook por erro de negócio do nosso lado (pedido inexistente, transição inválida, reenvio duplicado) — esses casos são apenas logados internamente, nunca retornam erro HTTP. A única exceção é um body que não é JSON válido, que o próprio Fastify rejeita com `400` antes de chegar ao handler.
+1. Suba a API (`npm run dev`).
+2. Abra `request.http` no editor com a extensão [REST Client](https://marketplace.visualstudio.com/items?itemName=humao.rest-client) (VS Code) ou equivalente (ex.: plugin HTTP Client do JetBrains).
+3. Rode a requisição `POST /pedidos` e copie o `id` retornado.
+4. Cole esse id no lugar de `PEDIDO_ID_AQUI` nas requisições de webhook que quiser testar, e rode-as na ordem desejada (ex.: `pago` antes de `estornado`, já que o estorno só é uma transição válida a partir de um pedido pago).
+
+Cada requisição no arquivo tem um comentário `###` explicando o cenário.
+
+## Decisões e motivos
+
+- **Fastify em vez de Next.js**: o problema é uma API pura, sem necessidade de páginas/app router. Next.js adicionaria build/tooling sem benefício aqui. Fastify foi escolhido entre as opções de Node por ter validação de schema e testes HTTP (`app.inject()`) nativos, sem subir um servidor real para testar, além de ser uma opção com menor tempo de overhead que o Express.
+
+- **Webhook sempre responde 200 ao provedor e sempre persiste o body recebido**: a tabela `WebhookEvent` guarda **todo** webhook recebido (válido ou não, pedido existente ou não), com o body bruto em `payload`. O fluxo é: (1) salva o evento recebido, (2) tenta processá-lo, (3) sempre responde `200`. Como, na minha experiência, o provedor interrompe o envio de webhooks caso receba erro na resposta da requisição após `n` tentativas, isso evita a interrupção da comunicação com o provedor e a auditoria de bugs/webhooks via log. A única exceção é um body que não é JSON válido, que o próprio Fastify rejeita com `400` antes de chegar ao handler.
+
+- **Sem repository pattern**: a aplicação é pequena o suficiente para que o acesso a dados fique direto nos _services_ (`src/services/*`) via Prisma Client, sem uma camada de repositório adicional — evita abstração sem ganho real de testabilidade/flexibilidade neste tamanho de projeto.
 
 - **Idempotência sem `@unique` no `eventoId`**: por pedido explícito, `WebhookEvent.eventoId` não tem constraint de unicidade no banco — a tabela é um log de chamadas, não um mecanismo de deduplicação via schema. A idempotência é verificada em nível de aplicação: antes de aplicar o efeito de um evento, o serviço consulta se já existe outro `WebhookEvent` com o mesmo `eventoId` e `processed: true`; se sim, o reenvio é ignorado (sem duplicar ingressos), mas ainda é registrado como uma nova linha na tabela.
 
@@ -100,13 +113,15 @@ O enunciado permitia Next.js ou Node puro, e deixava algumas regras implícitas.
 
 - **Case-insensitive nos valores de status**: o enunciado permite enviar status em maiúsculas ou minúsculas. O `status` do webhook é normalizado para minúsculo antes de ser comparado/persistido no `Pedido`/`Ingresso`; as respostas da API sempre devolvem os valores em minúsculo.
 
-- **Enums armazenados como `String`, não `enum` do Prisma**: o conector SQLite do Prisma não suporta o tipo `enum` nativo. Os valores válidos (`aguardando_pagamento`, `pago`, `recusado`, `estornado`, `ativo`, `cancelado`) são garantidos pela camada de aplicação (Zod + constantes TypeScript em `src/types/status.ts`), não pelo schema do banco.
+## O que faria diferente com mais tempo
 
-- **Sem repository pattern**: a aplicação é pequena o suficiente para que o acesso a dados fique direto nos *services* (`src/services/*`) via Prisma Client, sem uma camada de repositório adicional — evita abstração sem ganho real de testabilidade/flexibilidade neste tamanho de projeto.
+- Mais importante: criaria uma instância de worker para processar os webhooks. Como os provedores (do webhook) em geral acusam falha no recebimento do webhook caso a resposta demore um tempo pré-determinado a chegar, essa requisição deve ser respondida com rapidez, de forma a evitar a interrupção da comunicação. Nesse caso, a rota `/webhooks/pagamento` receberia o webhook, criaria um registro dele no banco de dados, delegaria o processamento dele para um job a ser processado de forma assíncrona no worker e responderia a requisição com status 200;
+- Adicionaria um linter e formatador de código (como o Prettier) para padronização do código do projeto;
+- Escolheria um padrão específico para `id` no banco de dados (como o UUID v7);
 
-- **1 ingresso por unidade comprada**: ao pagar um pedido, cada item gera `quantidade` linhas em `Ingresso`, cada uma vinculada ao item de origem (`itemPedidoId`) e ao pedido.
+## Tempo levado
 
-- **`WebhookEvent.pedidoId` sem foreign key**: como o evento deve ser salvo mesmo quando o `pedidoId` recebido não corresponde a nenhum pedido existente, esse campo é uma string livre, sem `@relation` obrigatória — uma FK rígida impediria a gravação do log nesse cenário.
+Aproximadamente 2h30min, entre criar o repositório, planejar a stack e padrões do projeto, codificação e revisão.
 
 ## Estrutura de pastas
 
